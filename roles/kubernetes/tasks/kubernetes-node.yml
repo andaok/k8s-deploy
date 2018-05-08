@@ -1,0 +1,168 @@
+---
+- name: "Upload kube-proxy csrfiles"
+  copy:
+    src: kube-proxy-csr.json
+    dest: /opt/ssl/kube-proxy-csr.json
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kube-proxy CA"
+  shell: "cfssl gencert -ca=/etc/kubernetes/ssl/ca.pem \
+  -ca-key=/etc/kubernetes/ssl/ca-key.pem \
+  -config=/opt/ssl/config.json \
+  -profile=kubernetes  kube-proxy-csr.json | cfssljson -bare kube-proxy"
+  args:
+    chdir: /opt/ssl/
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+- name: "Upload kube-proxy pem file"
+  synchronize: src=/opt/ssl/{{ item }} dest=/etc/kubernetes/ssl/
+  with_items:
+    - kube-proxy-key.pem
+    - kube-proxy.pem
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "'nodes' in group_names"
+
+- name: "Bind kubelet-bootstrap on system:node-bootstrapper"
+  shell: "kubectl create clusterrolebinding kubelet-bootstrap --clusterrole=system:node-bootstrapper --user=kubelet-bootstrap"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kubelet kubeconfig file step 1"
+  shell: "kubectl config set-cluster kubernetes \
+  --certificate-authority=/etc/kubernetes/ssl/ca.pem \
+  --embed-certs=true \
+  --server=https://127.0.0.1:{{ PROXY_PORT }} \
+  --kubeconfig=/opt/ssl/bootstrap.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kubelet kubeconfig file step 2"
+  shell: "kubectl config set-credentials kubelet-bootstrap \
+  --token={{ TOKEN }} \
+  --kubeconfig=/opt/ssl/bootstrap.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+- name: "Create kubelet kubeconfig file step 3"
+  shell: "kubectl config set-context default \
+  --cluster=kubernetes \
+  --user=kubelet-bootstrap \
+  --kubeconfig=/opt/ssl/bootstrap.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kubelet kubeconfig file step 4"
+  shell: "kubectl config use-context default --kubeconfig=/opt/ssl/bootstrap.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+- name: "Upload bootstrap.kubeconfig file"
+  synchronize: src=/opt/ssl/bootstrap.kubeconfig dest=/etc/kubernetes/
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "'nodes' in group_names"
+
+
+- name: "Create kube-proxy kubeconfig file step 1"
+  shell: "kubectl config set-cluster kubernetes \
+  --certificate-authority=/etc/kubernetes/ssl/ca.pem \
+  --embed-certs=true \
+  --server=https://127.0.0.1:{{ PROXY_PORT }} \
+  --kubeconfig=/opt/ssl/kube-proxy.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kube-proxy kubeconfig file step 2"
+  shell: "kubectl config set-credentials kube-proxy \
+  --client-certificate=/etc/kubernetes/ssl/kube-proxy.pem \
+  --client-key=/etc/kubernetes/ssl/kube-proxy-key.pem \
+  --embed-certs=true \
+  --kubeconfig=/opt/ssl/kube-proxy.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Create kube-proxy kubeconfig file step 3"
+  shell: "kubectl config set-context default \
+  --cluster=kubernetes \
+  --user=kube-proxy \
+  --kubeconfig=/opt/ssl/kube-proxy.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+- name: "Create kube-proxy kubeconfig file step 4"
+  shell: "kubectl config use-context default --kubeconfig=/opt/ssl/kube-proxy.kubeconfig"
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "inventory_hostname == groups['masters'][0]"
+
+
+- name: "Upload kube-proxy.kubeconfigfile"
+  synchronize: src=/opt/ssl/kube-proxy.kubeconfig dest=/etc/kubernetes/
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: "'nodes' in group_names"
+
+
+- name: "Create nginx conf dir"
+  file: path=/etc/nginx state=directory
+  when: "'nodes' in group_names"
+
+- name: "Upload nginx conf file"
+  template:
+    src: nginx.conf.template
+    dest: /etc/nginx/nginx.conf
+  when: "'nodes' in group_names"
+
+
+- name: "Install nginx service"
+  template:
+    src: nginx-proxy.service.template
+    dest: /etc/systemd/system/nginx-proxy.service
+  when: "'nodes' in group_names"
+
+- name: "Start nginx proxy service"
+  systemd:
+    state: restarted
+    daemon_reload: yes
+    name: nginx-proxy
+    enabled: yes
+  when: "'nodes' in group_names"
+
+- name: "Install kubelet service"
+  template:
+    src: kubelet.service.template
+    dest: /etc/systemd/system/kubelet.service
+  when: "'nodes' in group_names"
+
+- name: "Install kube-proxy service"
+  template:
+    src: kube-proxy.service.template
+    dest: /etc/systemd/system/kube-proxy.service
+  when: "'nodes' in group_names"
+
+- name: "Create kube-proxy/kubelet work dir"
+  file: path={{ item }} state=directory
+  with_items:
+    - /var/lib/kube-proxy
+    - /var/lib/kubelet
+  when: "'nodes' in group_names"
+
+- name: "Start kubelet service"
+  systemd:
+    state: restarted
+    daemon_reload: yes
+    name: kubelet
+    enabled: yes
+  when: "'nodes' in group_names"
+
+- name: "Start kube-proxy service"
+  systemd:
+    state: restarted
+    daemon_reload: yes
+    name: kube-proxy
+    enabled: yes
+  when: "'nodes' in group_names"

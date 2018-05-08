@@ -1,0 +1,10 @@
+
+- name: Create CA
+  hosts:
+    - masters
+    - nodes
+    - etcd
+    - harbor
+  gather_facts: no
+  roles:
+    - ca

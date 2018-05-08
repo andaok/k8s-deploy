@@ -1,0 +1,33 @@
+
+
+- name: "Make sure docker tmp dir"
+  file: path=/tmp/docker_bin state=directory
+
+# - name: "Down load dokcer bin files"
+#   shell: "wget -qO- {{ DOCKER }}| tar xvz -C /tmp/docker_bin"
+- name: Unarchive docker binary to /opt
+  unarchive:
+    src: "{{ DOCKER }}"
+    dest: /tmp/docker_bin/
+    mode: 0755
+    remote_src: True
+
+- name: "Install docker"
+  shell: "cp -ap /tmp/docker_bin/docker/{{item}} /usr/bin/{{ item }}"
+  with_items:
+  - docker-containerd
+  - docker-containerd-shim
+  - docker-init
+  - docker-runc
+  - docker
+  - docker-containerd-ctr
+  - dockerd
+  - docker-proxy
+
+
+- name: "Install docker service"
+  template: src=docker.service.template dest=/etc/systemd/system/docker.service
+
+
+- name: "Start docker service"
+  shell: systemctl daemon-reload && systemctl enable docker && systemctl restart docker

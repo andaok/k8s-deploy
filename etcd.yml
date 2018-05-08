@@ -1,0 +1,8 @@
+
+- name: Create CA
+  hosts:
+    - etcd
+    - masters
+  gather_facts: no
+  roles:
+    - etcd
